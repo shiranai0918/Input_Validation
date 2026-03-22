@@ -1,35 +1,51 @@
-<?php
-session_start();
-include "config.php";
+// Register
+router.post('/register', isNotAuthenticated, async (req, res) => {
+    const { username, email, password, confirmPassword } = req.body;
 
-if(isset($_POST['login'])){
+    // Basic check
+    if (!username || !email || !password || !confirmPassword) {
+        return res.render('register', { error: 'All fields are required' });
+    }
 
-$username = $_POST['username'];
-$password = $_POST['password'];
+    // Email domain check (@gmail.com only)
+    if (!email.endsWith('@gmail.com')) {
+        return res.render('register', { error: 'Only @gmail.com addresses are allowed' });
+    }
 
-$sql = "SELECT * FROM users WHERE username='$username' AND password='$password'";
-$result = $conn->query($sql);
+    // Password Strength check (Regex)
+    const passwordRegex = /^(?=.*[A-Z])(?=.*\d)(?=.*[!@#$%^&*()_+])[A-Za-z\d!@#$%^&*()_+]{8,}$/;
+    if (!passwordRegex.test(password)) {
+        return res.render('register', {
+            error: 'Password too weak! Requires 1 uppercase, 1 number, and 1 special character.'
+        });
+    }
 
-if($result->num_rows > 0){
-    $_SESSION['username'] = $username;
-    header("Location: dashboard.php");
-}else{
-    echo "Login Failed";
-}
+    // Match check
+    if (password !== confirmPassword) {
+        return res.render('register', { error: 'Passwords do not match' });
+    }
 
-}
-?>
+    let connection;
+    try {
+        connection = await pool.getConnection();
 
-<h2>Login</h2>
+        const [existing] = await connection.query('SELECT * FROM users WHERE email = ?', [email]);
+        if (existing.length > 0) {
+            return res.render('register', { error: 'Email already registered' });
+        }
 
-<form method="POST">
+        const hashedPassword = await bcrypt.hash(password, 10);
+        await connection.query(
+            'INSERT INTO users (username, email, password, role, is_verified) VALUES (?, ?, ?, ?, ?)',
+            [username, email, hashedPassword, 'user', 0]
+        );
 
-Username:<br>
-<input type="text" name="username"><br><br>
+        res.redirect('/auth/user-login');
 
-Password:<br>
-<input type="password" name="password"><br><br>
-
-<button name="login">Login</button>
-
-</form>
+    } catch (err) {
+        console.error('Registration Error:', err);
+        res.render('register', { error: 'A server error occurred' });
+    } finally {
+        if (connection) connection.release();
+    }
+});
